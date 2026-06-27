@@ -78,7 +78,7 @@ async function extractFilesAndText(blocks) {
       urls.push(block.embed.url);
     }
 
-    // Extract text from rich_text - FIXED: Check if rich_text exists and is array
+    // Extract text from rich_text
     if (block[block.type] && block[block.type].rich_text && Array.isArray(block[block.type].rich_text)) {
       for (const text of block[block.type].rich_text) {
         if (text.plain_text) texts.push(text.plain_text);
@@ -115,14 +115,14 @@ async function getChildren(blockId) {
   }
 }
 
-async function crawlAllBlocks(blockId, depth = 0) {
+async function crawlAllBlocks(blockId) {
   let all = [];
   try {
     const children = await getChildren(blockId);
     for (const child of children) {
       all.push(child);
       if (child.has_children) {
-        const deeper = await crawlAllBlocks(child.id, depth + 1);
+        const deeper = await crawlAllBlocks(child.id);
         all = all.concat(deeper);
       }
     }
@@ -158,13 +158,7 @@ async function main() {
   let allUrls = [];
   
   // Process each page and database
-  let processed = 0;
-  const total = pages.length + databases.length;
-  
   for (const item of [...pages, ...databases]) {
-    processed++;
-    if (processed % 10 === 0) console.log(`  Processing ${processed}/${total}...`);
-    
     // Extract from item properties
     const extracted = await extractFilesAndText([item]);
     allFiles = allFiles.concat(extracted.files);
@@ -229,7 +223,7 @@ async function main() {
     fileCount: allFiles.length,
     textCount: allTexts.length,
     urlCount: allUrls.length,
-    files: allFiles.slice(0, 100), // Limit to prevent huge JSON
+    files: allFiles.slice(0, 100),
     texts: allTexts.slice(0, 100),
     urls: allUrls.slice(0, 100),
     totalFiles: allFiles.length,

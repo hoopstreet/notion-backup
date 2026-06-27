@@ -10,7 +10,7 @@ app.post('/webhook/trigger', async (req, res) => {
   console.log('🔄 Instant backup triggered!');
   try {
     await execAsync('npm start');
-    await execAsync('git add databases/ attachments/');
+    await execAsync('git add databases/ attachments/ 2>/dev/null || true');
     await execAsync('git commit -m "Instant backup: $(date)" --allow-empty');
     await execAsync('git push');
     res.json({ status: '✅ Backup complete with all files!' });
