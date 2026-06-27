@@ -1,4 +1,6 @@
 .env
 node_modules/
-databases/*.json
+##databases/*.json
 logs/*.log
+# But include attachments
+attachments/*
