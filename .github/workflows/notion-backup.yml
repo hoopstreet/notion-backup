@@ -1,34 +1,49 @@
-name: Private Notion Backup
+name: 🔥 Priority Private Notion Backup
 
 on:
+  # Run every 5 minutes (GitHub's minimum)
   schedule:
     - cron: '*/5 * * * *'
+  
+  # Run on push to main
+  push:
+    branches: [ main ]
+  
+  # Manual trigger
   workflow_dispatch:
+  
+  # Run on repository dispatch (for webhook triggers)
+  repository_dispatch:
+    types: [backup-trigger]
 
 permissions:
   contents: write
 
 jobs:
-  backup:
+  priority-backup:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+      
       - run: npm ci
-      - name: Backup Private Notion
+      
+      - name: 🚀 Priority Backup
         env:
           NOTION_TOKEN: \${{ secrets.NOTION_TOKEN }}
           NOTION_PAGE_ID: \${{ secrets.NOTION_PAGE_ID }}
         run: npm start
-      - name: Commit and push
+      
+      - name: 📤 Commit & Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add databases/
-          git diff --staged --quiet || git commit -m "Auto-backup: $(date)"
+          git diff --staged --quiet || git commit -m "Priority backup: $(date '+%Y-%m-%d %H:%M:%S')"
           git push
