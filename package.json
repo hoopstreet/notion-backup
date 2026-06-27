@@ -1,0 +1,14 @@
+{
+  "name": "notion-backup-private",
+  "version": "1.0.0",
+  "description": "Private Notion workspace backup",
+  "main": "scripts/backup.js",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/backup.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.1.1",
+    "dotenv": "^16.4.5"
+  }
+}
