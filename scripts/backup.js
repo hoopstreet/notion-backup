@@ -27,8 +27,8 @@ async function notionRequest(endpoint, method = 'GET', data = null) {
     if (stderr && !stderr.includes('Warning')) console.warn('stderr:', stderr);
     return JSON.parse(stdout);
   } catch (error) {
-    console.error('API Error:', error.message);
-    throw error;
+    console.warn(`  ⚠️ API Error: ${error.message}`);
+    return null;
   }
 }
 
@@ -38,7 +38,8 @@ async function downloadFile(url, outputPath) {
       method: 'GET',
       url: url,
       responseType: 'stream',
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { 'Authorization': `Bearer ${token}` },
+      timeout: 30000
     });
     const writer = fs.createWriteStream(outputPath);
     response.data.pipe(writer);
@@ -47,7 +48,7 @@ async function downloadFile(url, outputPath) {
       writer.on('error', reject);
     });
   } catch (error) {
-    console.warn(`  ⚠️ Failed to download: ${url}`);
+    console.warn(`  ⚠️ Failed to download: ${path.basename(outputPath)}`);
   }
 }
 
@@ -56,51 +57,57 @@ async function extractFilesAndText(blocks) {
   const texts = [];
   const urls = [];
 
+  if (!blocks || !Array.isArray(blocks)) return { files, texts, urls };
+
   for (const block of blocks) {
-    // Check for file blocks
-    if (block.type === 'file' && block.file) {
-      const url = block.file.file?.url || block.file.external?.url;
-      if (url) files.push({ name: block.file.name || 'file', url });
-    }
-    if (block.type === 'image' && block.image) {
-      const url = block.image.file?.url || block.image.external?.url;
-      if (url) files.push({ name: 'image.jpg', url });
-    }
-    if (block.type === 'pdf' && block.pdf) {
-      const url = block.pdf.external?.url;
-      if (url) files.push({ name: 'document.pdf', url });
-    }
-    if (block.type === 'video' && block.video) {
-      const url = block.video.file?.url || block.video.external?.url;
-      if (url) files.push({ name: 'video.mp4', url });
-    }
-    if (block.type === 'embed' && block.embed?.url) {
-      urls.push(block.embed.url);
-    }
-
-    // Extract text from rich_text
-    if (block[block.type] && block[block.type].rich_text && Array.isArray(block[block.type].rich_text)) {
-      for (const text of block[block.type].rich_text) {
-        if (text.plain_text) texts.push(text.plain_text);
+    try {
+      // Check for file blocks
+      if (block.type === 'file' && block.file) {
+        const url = block.file.file?.url || block.file.external?.url;
+        if (url) files.push({ name: block.file.name || 'file', url });
       }
-    }
+      if (block.type === 'image' && block.image) {
+        const url = block.image.file?.url || block.image.external?.url;
+        if (url) files.push({ name: 'image.jpg', url });
+      }
+      if (block.type === 'pdf' && block.pdf) {
+        const url = block.pdf.external?.url;
+        if (url) files.push({ name: 'document.pdf', url });
+      }
+      if (block.type === 'video' && block.video) {
+        const url = block.video.file?.url || block.video.external?.url;
+        if (url) files.push({ name: 'video.mp4', url });
+      }
+      if (block.type === 'embed' && block.embed?.url) {
+        urls.push(block.embed.url);
+      }
 
-    // Check properties for files/URLs
-    if (block.properties) {
-      for (const [key, prop] of Object.entries(block.properties)) {
-        if (prop.type === 'files' && prop.files && Array.isArray(prop.files)) {
-          for (const file of prop.files) {
-            const url = file.file?.url || file.external?.url;
-            if (url) files.push({ name: file.name || 'file', url });
-          }
-        }
-        if (prop.type === 'url' && prop.url) urls.push(prop.url);
-        if (prop.type === 'rich_text' && prop.rich_text && Array.isArray(prop.rich_text)) {
-          for (const text of prop.rich_text) {
-            if (text.plain_text) texts.push(text.plain_text);
-          }
+      // Extract text from rich_text
+      if (block[block.type] && block[block.type].rich_text && Array.isArray(block[block.type].rich_text)) {
+        for (const text of block[block.type].rich_text) {
+          if (text.plain_text) texts.push(text.plain_text);
         }
       }
+
+      // Check properties for files/URLs
+      if (block.properties) {
+        for (const [key, prop] of Object.entries(block.properties)) {
+          if (prop.type === 'files' && prop.files && Array.isArray(prop.files)) {
+            for (const file of prop.files) {
+              const url = file.file?.url || file.external?.url;
+              if (url) files.push({ name: file.name || 'file', url });
+            }
+          }
+          if (prop.type === 'url' && prop.url) urls.push(prop.url);
+          if (prop.type === 'rich_text' && prop.rich_text && Array.isArray(prop.rich_text)) {
+            for (const text of prop.rich_text) {
+              if (text.plain_text) texts.push(text.plain_text);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Skip problematic blocks
     }
   }
   return { files, texts, urls };
@@ -109,7 +116,7 @@ async function extractFilesAndText(blocks) {
 async function getChildren(blockId) {
   try {
     const response = await notionRequest(`/blocks/${blockId}/children`, 'GET');
-    return response.results || [];
+    return response?.results || [];
   } catch (error) {
     return [];
   }
@@ -127,7 +134,7 @@ async function crawlAllBlocks(blockId) {
       }
     }
   } catch (error) {
-    // Silently skip blocks that can't be processed
+    // Silently skip
   }
   return all;
 }
@@ -140,7 +147,7 @@ async function main() {
     query: '',
     filter: { property: 'object', value: 'page' }
   });
-  const pages = searchResult.results || [];
+  const pages = searchResult?.results || [];
   console.log(`📄 Found ${pages.length} pages`);
   
   // Get all databases
@@ -148,7 +155,7 @@ async function main() {
     query: '',
     filter: { property: 'object', value: 'database' }
   });
-  const databases = dbResult.results || [];
+  const databases = dbResult?.results || [];
   console.log(`📊 Found ${databases.length} databases`);
   
   // Extract all content
@@ -158,24 +165,34 @@ async function main() {
   let allUrls = [];
   
   // Process each page and database
-  for (const item of [...pages, ...databases]) {
-    // Extract from item properties
-    const extracted = await extractFilesAndText([item]);
-    allFiles = allFiles.concat(extracted.files);
-    allTexts = allTexts.concat(extracted.texts);
-    allUrls = allUrls.concat(extracted.urls);
+  const allItems = [...pages, ...databases];
+  let processed = 0;
+  
+  for (const item of allItems) {
+    processed++;
+    if (processed % 10 === 0) console.log(`  Processing ${processed}/${allItems.length}...`);
     
-    // Crawl blocks inside
-    if (item.id) {
-      try {
-        const blocks = await crawlAllBlocks(item.id);
-        const blockData = await extractFilesAndText(blocks);
-        allFiles = allFiles.concat(blockData.files);
-        allTexts = allTexts.concat(blockData.texts);
-        allUrls = allUrls.concat(blockData.urls);
-      } catch (e) {
-        // Silently skip problematic items
+    try {
+      // Extract from item properties
+      const extracted = await extractFilesAndText([item]);
+      allFiles = allFiles.concat(extracted.files);
+      allTexts = allTexts.concat(extracted.texts);
+      allUrls = allUrls.concat(extracted.urls);
+      
+      // Crawl blocks inside
+      if (item.id) {
+        try {
+          const blocks = await crawlAllBlocks(item.id);
+          const blockData = await extractFilesAndText(blocks);
+          allFiles = allFiles.concat(blockData.files);
+          allTexts = allTexts.concat(blockData.texts);
+          allUrls = allUrls.concat(blockData.urls);
+        } catch (e) {
+          // Skip problematic items
+        }
       }
+    } catch (e) {
+      // Skip problematic items
     }
   }
   
@@ -189,14 +206,22 @@ async function main() {
   if (uniqueFiles.length === 0) {
     console.log('  ℹ️ No files to download');
   } else {
+    console.log(`  Downloading ${uniqueFiles.length} unique files...`);
+    let count = 0;
     for (const file of uniqueFiles) {
       if (file.url) {
+        count++;
         const fileName = path.basename(file.url.split('?')[0]) || file.name || `file_${Date.now()}`;
         const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
         const outputPath = path.join(DOWNLOAD_DIR, safeName);
-        console.log(`  💾 ${safeName}`);
-        await downloadFile(file.url, outputPath);
-        downloaded++;
+        if (!fs.existsSync(outputPath)) {
+          console.log(`  💾 [${count}/${uniqueFiles.length}] ${safeName}`);
+          await downloadFile(file.url, outputPath);
+          downloaded++;
+        } else {
+          console.log(`  ⏭️ [${count}/${uniqueFiles.length}] ${safeName} (already exists)`);
+          downloaded++;
+        }
       }
     }
   }
@@ -220,15 +245,12 @@ async function main() {
       title: d.properties?.title?.title?.[0]?.plain_text || 'Untitled',
       url: d.url
     })),
-    fileCount: allFiles.length,
-    textCount: allTexts.length,
-    urlCount: allUrls.length,
-    files: allFiles.slice(0, 100),
-    texts: allTexts.slice(0, 100),
-    urls: allUrls.slice(0, 100),
     totalFiles: allFiles.length,
     totalTexts: allTexts.length,
-    totalUrls: allUrls.length
+    totalUrls: allUrls.length,
+    files: allFiles.slice(0, 50),
+    texts: allTexts.slice(0, 50),
+    urls: allUrls.slice(0, 50)
   };
   
   const backupPath = path.join(outputDir, `full_backup_${timestamp}.json`);
