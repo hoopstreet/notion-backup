@@ -2,20 +2,32 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
-
 | Version | Supported          |
 | ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| latest  | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
+We take security seriously. If you discover a security vulnerability, please:
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+1. **DO NOT** disclose it publicly
+2. Create a private security advisory on GitHub
+3. Provide detailed information about the vulnerability
+
+We will respond within 48 hours and work to fix the issue promptly.
+
+## Security Best Practices
+
+- Always use the latest version
+- Enable 2FA on your GitHub account
+- Use strong passwords
+- Review access tokens regularly
+- Never commit sensitive data
+
+## Security Features Implemented
+
+- Branch protection rules
+- Dependabot alerts
+- Code scanning
+- Secret scanning
+- Signed commits required
