@@ -55,7 +55,7 @@ async function extractFilesAndText(blocks) {
   const files = [];
   const texts = [];
   const urls = [];
-  
+
   for (const block of blocks) {
     // Check for file blocks
     if (block.type === 'file' && block.file) {
@@ -77,25 +77,25 @@ async function extractFilesAndText(blocks) {
     if (block.type === 'embed' && block.embed?.url) {
       urls.push(block.embed.url);
     }
-    
-    // Extract text from rich_text
-    if (block[block.type]?.rich_text) {
+
+    // Extract text from rich_text - FIXED: Check if rich_text exists and is array
+    if (block[block.type] && block[block.type].rich_text && Array.isArray(block[block.type].rich_text)) {
       for (const text of block[block.type].rich_text) {
         if (text.plain_text) texts.push(text.plain_text);
       }
     }
-    
+
     // Check properties for files/URLs
     if (block.properties) {
       for (const [key, prop] of Object.entries(block.properties)) {
-        if (prop.type === 'files' && prop.files) {
+        if (prop.type === 'files' && prop.files && Array.isArray(prop.files)) {
           for (const file of prop.files) {
             const url = file.file?.url || file.external?.url;
-            if (url) files.push({ name: file.name, url });
+            if (url) files.push({ name: file.name || 'file', url });
           }
         }
         if (prop.type === 'url' && prop.url) urls.push(prop.url);
-        if (prop.type === 'rich_text' && prop.rich_text) {
+        if (prop.type === 'rich_text' && prop.rich_text && Array.isArray(prop.rich_text)) {
           for (const text of prop.rich_text) {
             if (text.plain_text) texts.push(text.plain_text);
           }
@@ -107,19 +107,27 @@ async function extractFilesAndText(blocks) {
 }
 
 async function getChildren(blockId) {
-  const response = await notionRequest(`/blocks/${blockId}/children`, 'GET');
-  return response.results || [];
+  try {
+    const response = await notionRequest(`/blocks/${blockId}/children`, 'GET');
+    return response.results || [];
+  } catch (error) {
+    return [];
+  }
 }
 
-async function crawlAllBlocks(blockId) {
+async function crawlAllBlocks(blockId, depth = 0) {
   let all = [];
-  const children = await getChildren(blockId);
-  for (const child of children) {
-    all.push(child);
-    if (child.has_children) {
-      const deeper = await crawlAllBlocks(child.id);
-      all = all.concat(deeper);
+  try {
+    const children = await getChildren(blockId);
+    for (const child of children) {
+      all.push(child);
+      if (child.has_children) {
+        const deeper = await crawlAllBlocks(child.id, depth + 1);
+        all = all.concat(deeper);
+      }
     }
+  } catch (error) {
+    // Silently skip blocks that can't be processed
   }
   return all;
 }
@@ -150,7 +158,13 @@ async function main() {
   let allUrls = [];
   
   // Process each page and database
+  let processed = 0;
+  const total = pages.length + databases.length;
+  
   for (const item of [...pages, ...databases]) {
+    processed++;
+    if (processed % 10 === 0) console.log(`  Processing ${processed}/${total}...`);
+    
     // Extract from item properties
     const extracted = await extractFilesAndText([item]);
     allFiles = allFiles.concat(extracted.files);
@@ -165,9 +179,8 @@ async function main() {
         allFiles = allFiles.concat(blockData.files);
         allTexts = allTexts.concat(blockData.texts);
         allUrls = allUrls.concat(blockData.urls);
-        console.log(`  ✅ Processed ${blocks.length} blocks from ${item.id.substring(0,8)}`);
       } catch (e) {
-        console.warn(`  ⚠️ Could not process blocks for ${item.id}`);
+        // Silently skip problematic items
       }
     }
   }
@@ -178,14 +191,19 @@ async function main() {
   console.log('📥 Downloading files...');
   let downloaded = 0;
   const uniqueFiles = allFiles.filter((f, i) => allFiles.findIndex(x => x.url === f.url) === i);
-  for (const file of uniqueFiles) {
-    if (file.url) {
-      const fileName = path.basename(file.url.split('?')[0]) || file.name || `file_${Date.now()}`;
-      const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const outputPath = path.join(DOWNLOAD_DIR, safeName);
-      console.log(`  💾 ${safeName}`);
-      await downloadFile(file.url, outputPath);
-      downloaded++;
+  
+  if (uniqueFiles.length === 0) {
+    console.log('  ℹ️ No files to download');
+  } else {
+    for (const file of uniqueFiles) {
+      if (file.url) {
+        const fileName = path.basename(file.url.split('?')[0]) || file.name || `file_${Date.now()}`;
+        const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const outputPath = path.join(DOWNLOAD_DIR, safeName);
+        console.log(`  💾 ${safeName}`);
+        await downloadFile(file.url, outputPath);
+        downloaded++;
+      }
     }
   }
   console.log(`✅ Downloaded ${downloaded} unique files`);
@@ -198,22 +216,31 @@ async function main() {
   const fullData = {
     timestamp,
     pageId,
-    pages: pages.map(p => ({ id: p.id, title: p.properties?.title?.title?.[0]?.plain_text || 'Untitled' })),
-    databases: databases.map(d => ({ id: d.id, title: d.properties?.title?.title?.[0]?.plain_text || 'Untitled' })),
+    pages: pages.map(p => ({ 
+      id: p.id, 
+      title: p.properties?.title?.title?.[0]?.plain_text || 'Untitled',
+      url: p.url
+    })),
+    databases: databases.map(d => ({ 
+      id: d.id, 
+      title: d.properties?.title?.title?.[0]?.plain_text || 'Untitled',
+      url: d.url
+    })),
     fileCount: allFiles.length,
     textCount: allTexts.length,
     urlCount: allUrls.length,
-    files: allFiles,
-    texts: allTexts,
-    urls: allUrls
+    files: allFiles.slice(0, 100), // Limit to prevent huge JSON
+    texts: allTexts.slice(0, 100),
+    urls: allUrls.slice(0, 100),
+    totalFiles: allFiles.length,
+    totalTexts: allTexts.length,
+    totalUrls: allUrls.length
   };
   
-  fs.writeFileSync(
-    path.join(outputDir, `full_backup_${timestamp}.json`),
-    JSON.stringify(fullData, null, 2)
-  );
+  const backupPath = path.join(outputDir, `full_backup_${timestamp}.json`);
+  fs.writeFileSync(backupPath, JSON.stringify(fullData, null, 2));
   
-  console.log(`✅ Saved to databases/full_backup_${timestamp}.json`);
+  console.log(`✅ Saved to ${backupPath}`);
   console.log(`📄 ${pages.length} pages | 📊 ${databases.length} databases`);
   console.log(`📎 ${allFiles.length} files | 📝 ${allTexts.length} texts | 🔗 ${allUrls.length} URLs`);
   console.log('=== ✅ COMPLETE ===');

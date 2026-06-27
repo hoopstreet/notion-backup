@@ -1,5 +1,5 @@
 .env
 node_modules/
 logs/*.log
-attachments/
 # databases/*.json   # <-- Commented out so we track backups
+attachments/
