@@ -16,7 +16,22 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 }
 
-// Helper to download a file from a URL
+async function notionRequest(endpoint, method = 'GET', data = null) {
+  const cmd = `curl -s -X ${method} https://api.notion.com/v1${endpoint} \
+    -H "Authorization: Bearer ${token}" \
+    -H "Notion-Version: 2022-06-28" \
+    -H "Content-Type: application/json" \
+    ${data ? `-d '${JSON.stringify(data)}'` : ''}`;
+  try {
+    const { stdout, stderr } = await execAsync(cmd);
+    if (stderr && !stderr.includes('Warning')) console.warn('stderr:', stderr);
+    return JSON.parse(stdout);
+  } catch (error) {
+    console.error('API Error:', error.message);
+    throw error;
+  }
+}
+
 async function downloadFile(url, outputPath) {
   try {
     const response = await axios({
@@ -32,190 +47,176 @@ async function downloadFile(url, outputPath) {
       writer.on('error', reject);
     });
   } catch (error) {
-    console.error(`  ❌ Failed to download ${url}:`, error.message);
+    console.warn(`  ⚠️ Failed to download: ${url}`);
   }
 }
 
-async function notionRequest(endpoint, method = 'GET', data = null) {
-  const cmd = `curl -s -X ${method} https://api.notion.com/v1${endpoint} \
-    -H "Authorization: Bearer ${token}" \
-    -H "Notion-Version: 2022-06-28" \
-    -H "Content-Type: application/json" \
-    ${data ? `-d '${JSON.stringify(data)}'` : ''}`;
-
-  try {
-    const { stdout, stderr } = await execAsync(cmd);
-    if (stderr && !stderr.includes('Warning')) console.warn('Curl stderr:', stderr);
-    return JSON.parse(stdout);
-  } catch (error) {
-    console.error('Curl error:', error.message);
-    throw error;
-  }
-}
-
-// Recursively get all blocks from a page
-async function getBlocks(blockId) {
-  let allBlocks = [];
-  let hasMore = true;
-  let startCursor = undefined;
-
-  while (hasMore) {
-    const response = await notionRequest(`/blocks/${blockId}/children`, 'GET');
-    const blocks = response.results || [];
-    allBlocks = allBlocks.concat(blocks);
-
-    for (const block of blocks) {
-      if (block.has_children) {
-        const childBlocks = await getBlocks(block.id);
-        allBlocks = allBlocks.concat(childBlocks);
+async function extractFilesAndText(blocks) {
+  const files = [];
+  const texts = [];
+  const urls = [];
+  
+  for (const block of blocks) {
+    // Check for file blocks
+    if (block.type === 'file' && block.file) {
+      const url = block.file.file?.url || block.file.external?.url;
+      if (url) files.push({ name: block.file.name || 'file', url });
+    }
+    if (block.type === 'image' && block.image) {
+      const url = block.image.file?.url || block.image.external?.url;
+      if (url) files.push({ name: 'image.jpg', url });
+    }
+    if (block.type === 'pdf' && block.pdf) {
+      const url = block.pdf.external?.url;
+      if (url) files.push({ name: 'document.pdf', url });
+    }
+    if (block.type === 'video' && block.video) {
+      const url = block.video.file?.url || block.video.external?.url;
+      if (url) files.push({ name: 'video.mp4', url });
+    }
+    if (block.type === 'embed' && block.embed?.url) {
+      urls.push(block.embed.url);
+    }
+    
+    // Extract text from rich_text
+    if (block[block.type]?.rich_text) {
+      for (const text of block[block.type].rich_text) {
+        if (text.plain_text) texts.push(text.plain_text);
       }
     }
-
-    hasMore = response.has_more || false;
-    startCursor = response.next_cursor;
-  }
-  return allBlocks;
-}
-
-// Extract file URLs and metadata from properties
-function extractFilesAndMetadata(pageOrBlock) {
-  const extracted = { files: [], richText: [], url: null };
-
-  // Check properties for files/URLs
-  if (pageOrBlock.properties) {
-    for (const [key, prop] of Object.entries(pageOrBlock.properties)) {
-      if (prop.type === 'files' && prop.files) {
-        for (const file of prop.files) {
-          extracted.files.push({ name: file.name, url: file.file?.url || file.external?.url });
+    
+    // Check properties for files/URLs
+    if (block.properties) {
+      for (const [key, prop] of Object.entries(block.properties)) {
+        if (prop.type === 'files' && prop.files) {
+          for (const file of prop.files) {
+            const url = file.file?.url || file.external?.url;
+            if (url) files.push({ name: file.name, url });
+          }
         }
-      }
-      if (prop.type === 'url' && prop.url) {
-        extracted.url = prop.url;
-      }
-      if (prop.type === 'rich_text' && prop.rich_text) {
-        for (const text of prop.rich_text) {
-          if (text.plain_text) extracted.richText.push(text.plain_text);
+        if (prop.type === 'url' && prop.url) urls.push(prop.url);
+        if (prop.type === 'rich_text' && prop.rich_text) {
+          for (const text of prop.rich_text) {
+            if (text.plain_text) texts.push(text.plain_text);
+          }
         }
       }
     }
   }
-
-  // Check block content for files/embeds
-  if (pageOrBlock.type === 'file' && pageOrBlock.file) {
-    extracted.files.push({ name: pageOrBlock.file.name, url: pageOrBlock.file.file?.url || pageOrBlock.file.external?.url });
-  }
-  if (pageOrBlock.type === 'embed' && pageOrBlock.embed?.url) {
-    extracted.url = pageOrBlock.embed.url;
-  }
-  if (pageOrBlock.type === 'pdf' && pageOrBlock.pdf?.external?.url) {
-    extracted.files.push({ name: 'document.pdf', url: pageOrBlock.pdf.external.url });
-  }
-  if (pageOrBlock.type === 'image' && pageOrBlock.image) {
-    extracted.files.push({ name: 'image.jpg', url: pageOrBlock.image.file?.url || pageOrBlock.image.external?.url });
-  }
-  if (pageOrBlock.type === 'video' && pageOrBlock.video) {
-    extracted.files.push({ name: 'video.mp4', url: pageOrBlock.video.file?.url || pageOrBlock.video.external?.url });
-  }
-
-  return extracted;
+  return { files, texts, urls };
 }
 
-async function crawlWorkspace() {
-  console.log('📂 Crawling Notion workspace...');
+async function getChildren(blockId) {
+  const response = await notionRequest(`/blocks/${blockId}/children`, 'GET');
+  return response.results || [];
+}
 
+async function crawlAllBlocks(blockId) {
+  let all = [];
+  const children = await getChildren(blockId);
+  for (const child of children) {
+    all.push(child);
+    if (child.has_children) {
+      const deeper = await crawlAllBlocks(child.id);
+      all = all.concat(deeper);
+    }
+  }
+  return all;
+}
+
+async function main() {
+  console.log(`🚀 Starting FULL backup for ${pageId}`);
+  
   // Get all pages
-  const result = await notionRequest('/search', 'POST', {
+  const searchResult = await notionRequest('/search', 'POST', {
     query: '',
     filter: { property: 'object', value: 'page' }
   });
-  const pages = result.results || [];
-  console.log(`✅ Found ${pages.length} pages`);
-
+  const pages = searchResult.results || [];
+  console.log(`📄 Found ${pages.length} pages`);
+  
   // Get all databases
   const dbResult = await notionRequest('/search', 'POST', {
     query: '',
     filter: { property: 'object', value: 'database' }
   });
   const databases = dbResult.results || [];
-  console.log(`✅ Found ${databases.length} databases`);
-
-  // Extract ALL content and files
+  console.log(`📊 Found ${databases.length} databases`);
+  
+  // Extract all content
   console.log('📎 Extracting files and metadata...');
-  const allFiles = [];
-  const allRichText = [];
-  const allUrls = [];
-
-  // Process pages and databases
+  let allFiles = [];
+  let allTexts = [];
+  let allUrls = [];
+  
+  // Process each page and database
   for (const item of [...pages, ...databases]) {
-    const extracted = extractFilesAndMetadata(item);
-    allFiles.push(...extracted.files);
-    allRichText.push(...extracted.richText);
-    if (extracted.url) allUrls.push(extracted.url);
-
-    // Get blocks inside this page/database
+    // Extract from item properties
+    const extracted = await extractFilesAndText([item]);
+    allFiles = allFiles.concat(extracted.files);
+    allTexts = allTexts.concat(extracted.texts);
+    allUrls = allUrls.concat(extracted.urls);
+    
+    // Crawl blocks inside
     if (item.id) {
       try {
-        const blocks = await getBlocks(item.id);
-        for (const block of blocks) {
-          const blockExtracted = extractFilesAndMetadata(block);
-          allFiles.push(...blockExtracted.files);
-          allRichText.push(...blockExtracted.richText);
-          if (blockExtracted.url) allUrls.push(blockExtracted.url);
-        }
-      } catch (blockError) {
-        console.warn(`  ⚠️ Could not get blocks for ${item.id}`);
+        const blocks = await crawlAllBlocks(item.id);
+        const blockData = await extractFilesAndText(blocks);
+        allFiles = allFiles.concat(blockData.files);
+        allTexts = allTexts.concat(blockData.texts);
+        allUrls = allUrls.concat(blockData.urls);
+        console.log(`  ✅ Processed ${blocks.length} blocks from ${item.id.substring(0,8)}`);
+      } catch (e) {
+        console.warn(`  ⚠️ Could not process blocks for ${item.id}`);
       }
     }
   }
-
-  console.log(`✅ Found ${allFiles.length} files, ${allRichText.length} text blocks, ${allUrls.length} URLs`);
-
+  
+  console.log(`✅ Found ${allFiles.length} files, ${allTexts.length} text blocks, ${allUrls.length} URLs`);
+  
   // Download files
   console.log('📥 Downloading files...');
   let downloaded = 0;
-  for (const file of allFiles) {
+  const uniqueFiles = allFiles.filter((f, i) => allFiles.findIndex(x => x.url === f.url) === i);
+  for (const file of uniqueFiles) {
     if (file.url) {
-      const fileName = path.basename(file.url) || file.name || `file_${Date.now()}`;
-      const outputPath = path.join(DOWNLOAD_DIR, fileName);
-      console.log(`  💾 Downloading: ${fileName}`);
+      const fileName = path.basename(file.url.split('?')[0]) || file.name || `file_${Date.now()}`;
+      const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const outputPath = path.join(DOWNLOAD_DIR, safeName);
+      console.log(`  💾 ${safeName}`);
       await downloadFile(file.url, outputPath);
       downloaded++;
     }
   }
-  console.log(`✅ Downloaded ${downloaded} files`);
-
-  return { pages, databases, allFiles: allFiles.map(f => f.url), allRichText, allUrls };
+  console.log(`✅ Downloaded ${downloaded} unique files`);
+  
+  // Save backup
+  const outputDir = './databases';
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+  
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+  const fullData = {
+    timestamp,
+    pageId,
+    pages: pages.map(p => ({ id: p.id, title: p.properties?.title?.title?.[0]?.plain_text || 'Untitled' })),
+    databases: databases.map(d => ({ id: d.id, title: d.properties?.title?.title?.[0]?.plain_text || 'Untitled' })),
+    fileCount: allFiles.length,
+    textCount: allTexts.length,
+    urlCount: allUrls.length,
+    files: allFiles,
+    texts: allTexts,
+    urls: allUrls
+  };
+  
+  fs.writeFileSync(
+    path.join(outputDir, `full_backup_${timestamp}.json`),
+    JSON.stringify(fullData, null, 2)
+  );
+  
+  console.log(`✅ Saved to databases/full_backup_${timestamp}.json`);
+  console.log(`📄 ${pages.length} pages | 📊 ${databases.length} databases`);
+  console.log(`📎 ${allFiles.length} files | 📝 ${allTexts.length} texts | 🔗 ${allUrls.length} URLs`);
+  console.log('=== ✅ COMPLETE ===');
 }
 
-async function main() {
-  try {
-    console.log(`=== 🚀 Starting Notion Backup for ${pageId} ===`);
-    const data = await crawlWorkspace();
-
-    const outputDir = './databases';
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-    const fileName = `full_backup_${timestamp}.json`;
-
-    fs.writeFileSync(
-      path.join(outputDir, fileName),
-      JSON.stringify(data, null, 2)
-    );
-
-    console.log(`✅ Full backup saved to databases/${fileName}`);
-    console.log(`   📄 ${data.pages.length} pages`);
-    console.log(`   📊 ${data.databases.length} databases`);
-    console.log(`   📎 ${data.allFiles.length} files (downloaded to attachments/)`);
-    console.log(`   📝 ${data.allRichText.length} text blocks captured`);
-    console.log(`   🔗 ${data.allUrls.length} URLs captured`);
-    console.log('=== ✅ Backup Complete ===');
-  } catch (error) {
-    console.error('❌ Backup failed:', error.message);
-    process.exit(1);
-  }
-}
-
-main();
+main().catch(console.error);
