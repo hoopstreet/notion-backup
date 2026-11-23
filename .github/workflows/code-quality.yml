@@ -37,7 +37,7 @@ jobs:
       run: bandit -r . -f json -o bandit-report.json
     
     - name: Upload bandit report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: bandit-report
         path: bandit-report.json
